@@ -51,9 +51,9 @@ def register_machine(username, company_id):
             time.sleep(2)
             return register_machine(username, company_id)
 
-    sync_components(machine_id, company_id, so)
-
-    return machine_id
+    componentes = sync_components(machine_id, company_id, so)
+    print("id componentes ${componentes}")
+    return machine_id, componentes
 
 def configure_limits(machine_id):
     clear_screen()
@@ -80,31 +80,31 @@ def configure_limits(machine_id):
     return limits
 
 def main():
-    api_url = "http://44.208.193.41:5000/s3/raw/upload"
-
-    username, company_id = login()
-    company_name = get_company_name(company_id)
-    machine_id = register_machine(username, company_id)
-    limits = configure_limits(machine_id)
-
-    clear_screen()
-    print(f"=== Monitoramento Ativo - {company_name} ===")
-    print("\nConfigurações atuais:")
-    print(f"- Limite CPU: {limits['cpu_percent']}%")
-    if limits['cpu_freq']:
-        print(f"- Frequência máxima CPU: {limits['cpu_freq']}MHz")
-    print(f"- Limite RAM: {limits['ram_percent']}%")
-    print(f"- Limite Disco: {limits['disk_percent']}%")
-    print("\nPressione Ctrl+C para parar o monitoramento...")
-
-    mobu_id = getMobuId(so)
+    api_url = "http://localhost:5000/api/v1/monitoring"
 
     try:
-        monitor_and_send(company_name, mobu_id, api_url)
+        username, company_id = login()
+        company_name = get_company_name(company_id)
+        machine_id = register_machine(username, company_id)
+        limits = configure_limits(machine_id)
+
+        clear_screen()
+        print(f"=== Monitoramento Ativo - {company_name} ===")
+        print("\nConfigurações atuais:")
+        print(f"- Limite CPU: {limits['cpu_percent']}%")
+        if limits['cpu_freq']:
+            print(f"- Frequência máxima CPU: {limits['cpu_freq']}MHz")
+        print(f"- Limite RAM: {limits['ram_percent']}%")
+        print(f"- Limite Disco: {limits['disk_percent']}%")
+        print("\nPressione Ctrl+C para parar o monitoramento...")
+
+        mobu_id = getMobuId(so)
+        monitor_and_send(company_name, mobu_id, api_url, limits['ram_percent'], limits['cpu_percent'], machine_id[1])
     except KeyboardInterrupt:
         print("\nMonitoramento encerrado pelo usuário.")
     except Exception as e:
         print(f"\nErro durante o monitoramento: {str(e)}")
+        raise  # This will show the full traceback which can help debug the issue
 
 if __name__ == "__main__":
     main()

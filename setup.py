@@ -155,7 +155,6 @@ def getCpu(so):
             if result.returncode == 0:
                 cpu_name = [line.strip() for line in result.stdout.split('\n') if line.strip()][1]
                 return cpu_name
-
         elif so == "linux":
             command = "cat /proc/cpuinfo | grep 'model name' | uniq | cut -d ':' -f 2 | xargs"
             result = subprocess.run(command, shell=True, capture_output=True, text=True)
@@ -195,36 +194,34 @@ def get_system_components(so):
 
 def sync_components(fkServer, fkCompany, so):
     try:
+        print(f"Iniciando sincronização para servidor {fkServer}")
         current_components = get_system_components(so)
+        print(f"Componentes atuais encontrados: {len(current_components)}")
+        
         current_names = {comp['name'] for comp in current_components}
+        component_ids = []
 
         query_select = """
                        SELECT idComponent, name, type, description
-                       FROM Component
+                       FROM Component 
                        WHERE fkServer = %s
                        """
         cursorSelect.execute(query_select, (fkServer,))
         db_components = []
 
         for (idComponent, name, type_, description) in cursorSelect:
+            print(f"Componente do banco encontrado - ID: {idComponent}, Nome: {name}")
             db_components.append({
                 'idComponent': idComponent,
                 'name': name,
                 'type': type_,
                 'description': description
             })
+            component_ids.append(idComponent)
 
+        print(f"Total de IDs coletados: {len(component_ids)}")
         db_name_map = {comp['name']: comp for comp in db_components}
-        for db_comp in db_components:
-            if db_comp['name'] not in current_names:
-                deactivate_query = """
-                                   UPDATE Component
-                                   SET active     = 0
-                                   WHERE idComponent = %s
-                                     AND fkServer = %s
-                                   """
-                cursorInsert.execute(deactivate_query, (db_comp['idComponent'], fkServer))
-                print(f"[DESATIVADO] Componente: {db_comp['name']}")
+
         for current_comp in current_components:
             current_desc = str(current_comp['description']) if current_comp['description'] else None
 
@@ -239,8 +236,7 @@ def sync_components(fkServer, fkCompany, so):
                     update_query = """
                                    UPDATE Component
                                    SET type        = %s,
-                                       description = %s,
-                                       active      = 1
+                                       description = %s
                                    WHERE idComponent = %s
                                      AND fkServer = %s
                                    """
@@ -254,8 +250,8 @@ def sync_components(fkServer, fkCompany, so):
             else:
                 insert_query = """
                                INSERT INTO Component
-                                   (name, type, description, fkServer, active)
-                               VALUES (%s, %s, %s, %s, 1)
+                                   (name, type, description, fkServer)
+                               VALUES (%s, %s, %s, %s)
                                """
                 cursorInsert.execute(insert_query, (
                     current_comp['name'],
@@ -266,15 +262,18 @@ def sync_components(fkServer, fkCompany, so):
                 print(f"[INSERIDO] Novo componente: {current_comp['name']}")
 
         insert.commit()
-        print(f"✅ Sincronização concluída para servidor {fkServer} (Empresa {fkCompany})")
-        return True
+        print(f"✅ Sincronização concluída. IDs encontrados: {component_ids}")
+        return component_ids if component_ids else []
 
     except mysql.connector.Error as err:
         print(f"❌ Erro MySQL durante sincronização: {err}")
+        print(f"Query executada: {cursorSelect._last_executed}")
         insert.rollback()
         return False
 
     except Exception as e:
         print(f"❌ Erro inesperado durante sincronização: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
         insert.rollback()
         return False

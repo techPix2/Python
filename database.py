@@ -1,20 +1,27 @@
-import mysql.connector
+import  mysql.connector
 from mysql.connector import Error
 
-insert = mysql.connector.connect(
-    host="44.208.193.41",
+try:
+    insert = mysql.connector.connect(
+    host="localhost",
     port="3306",
-    user="techpix_insert",
-    password="techpix#2024",
-    database="TechPix"
+    user="root",
+    password="@",
+    database="TechPix",
+    ssl_disabled=True
 )
+except mysql.connector.Error as err:
+    print(f"Error connecting to MySQL: {err}")
+    raise
+
 select = mysql.connector.connect(
-    host="44.208.193.41",
+    host="localhost",
     port="3306",
-    user="techpix_select",
-    password="techpix#2024",
-    database="TechPix"
-)
+    user="root",
+    password="@",
+    database="TechPix",
+    ssl_disabled=True
+)   
 
 cursorInsert = insert.cursor()
 cursorSelect = select.cursor()

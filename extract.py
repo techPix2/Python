@@ -1,33 +1,40 @@
 import os
-
 import psutil
 import requests
+import csv
+from datetime import datetime
+import time
+from mysql.connector import Error
+from database import cursorInsert, insert  # Adicione esta importação
+from setup import getDiscos, so, getMobuId
 
-urlFlask = "http://44.208.193.41:5000/s3/raw/upload"
+urlFlask = "http://44.208.193.41/s3/raw/upload"
 
 def cpuData():
     cpuFreq = psutil.cpu_freq()
     cpuPercent = psutil.cpu_percent()
-    
     return cpuFreq, cpuPercent
 
 def ramData():
     ramUsed = psutil.virtual_memory().used
     ramPercent = psutil.virtual_memory().percent
-    
     return ramUsed, ramPercent
 
 def diskData(path):
     diskUsed = psutil.disk_usage(path).used
     diskPercent = psutil.disk_usage(path).percent
-
     return diskUsed, diskPercent
 
-import csv
-from datetime import datetime
-import time
+def tempoData():
+    boot_time = psutil.boot_time()
+    uptime_seconds = time.time() - boot_time
+    uptime_str = time.strftime("%H:%M:%S", time.gmtime(uptime_seconds))
+    return uptime_str
 
-from setup import getDiscos, so, getMobuId
+def netData():
+    bytesSend = psutil.net_io_counters().bytes_sent
+    bytesRecv = psutil.net_io_counters().bytes_recv
+    return [bytesRecv, bytesSend]
 
 def processData():
     processes = []
@@ -43,6 +50,7 @@ def processData():
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
     return processes
+
 
 def send_file_to_api(file_path, api_url):
     try:
@@ -61,7 +69,7 @@ def send_file_to_api(file_path, api_url):
         print(f"Falha ao enviar arquivo {file_path} para a API: {str(e)}")
         return False
 
-def monitor_and_send(companyName, mobuID, api_url):
+def monitor_and_send(companyName, mobuID, api_url, limite_cpu, limite_ram, fkComponents):
     record_count = 0
     current_file = None
     current_process_file = None
@@ -69,17 +77,17 @@ def monitor_and_send(companyName, mobuID, api_url):
 
     def create_new_files():
         nonlocal current_file, current_process_file, discos, record_count
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         output_file = f"{companyName}_{mobuID}_{timestamp}.csv"
-
         process_file = f"{companyName}_{mobuID}_{timestamp}_process.csv"
 
         discos = getDiscos(so)
 
         with open(output_file, mode='w', newline='') as file:
             writer = csv.writer(file)
-            headers = ['data_hora', 'cpu_freq', 'cpu_percent', 'ram_used', 'ram_percent']
+            headers = ['data_hora', 'uptime', 'cpu_freq', 'cpu_percent', 'ram_used', 'ram_percent']
 
             for disco in discos:
                 path_safe = disco['path'].replace('/', '_').replace('\\', '_').replace(':', '')
@@ -92,7 +100,7 @@ def monitor_and_send(companyName, mobuID, api_url):
 
         with open(process_file, mode='w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(['data_hora', 'process_name', 'memory_percent', 'cpu_percent', 'vms'])
+            writer.writerow(['data_hora', 'uptime', 'process_name', 'memory_percent', 'cpu_percent', 'vms'])
 
         print(f"Novos arquivos de monitoramento criados:")
         print(f"- {output_file}")
@@ -102,23 +110,44 @@ def monitor_and_send(companyName, mobuID, api_url):
         return output_file, process_file, discos
 
     current_file, current_process_file, discos = create_new_files()
-
+    
     while True:
         try:
             if record_count >= 100:
-
                 send_file_to_api(current_file, api_url)
                 send_file_to_api(current_process_file, api_url)
-
                 current_file, current_process_file, discos = create_new_files()
 
             data_hora = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+            uptime = tempoData()
 
             cpuFreq, cpuPercent = cpuData()
             ramUsed, ramPercent = ramData()
+            if cpuPercent > limite_cpu:
+                query = """INSERT INTO AlertMachine 
+                           (type, cpuPercent, cpuFreq, ramPercent, ramUsed, diskPercent, diskUsed, dateTime, fkComponent) 
+                           VALUES ('CPU', %s, %s, %s, %s, %s, %s, NOW(), %s)"""
+                try:
+                    cursorInsert.execute(query, (cpuPercent, cpuFreq.current, ramPercent, ramUsed, None, None, fkComponents[1]))
+                    insert.commit()
+                except Error as e:
+                    print(f"Erro ao cadastrar alerta: {e}")
+                    insert.rollback()
 
+            if ramPercent > limite_ram:
+                query = """INSERT INTO AlertMachine 
+                           (type, cpuPercent, cpuFreq, ramPercent, ramUsed, diskPercent, diskUsed, dateTime, fkComponent) 
+                           VALUES ('RAM', %s, %s, %s, %s, %s, %s, NOW(), %s)"""
+                try:
+                    cursorInsert.execute(query, (cpuPercent, cpuFreq.current, ramPercent, ramUsed, None, None, fkComponents[0]))
+                    insert.commit()
+                except Error as e:
+                    print(f"Erro ao cadastrar alerta: {e}")
+                    insert.rollback()
+                
             row = [
                 data_hora,
+                uptime,
                 cpuFreq.current,
                 cpuPercent,
                 ramUsed,
@@ -143,6 +172,7 @@ def monitor_and_send(companyName, mobuID, api_url):
                 for proc in processes:
                     writer.writerow([
                         data_hora,
+                        uptime,
                         proc['name'],
                         proc['memory_percent'],
                         proc['cpu_percent'],
@@ -150,15 +180,14 @@ def monitor_and_send(companyName, mobuID, api_url):
                     ])
 
             record_count += 1
-            time.sleep(2)
+            time.sleep(0.1)
 
         except KeyboardInterrupt:
             print("\nMonitoramento encerrado pelo usuário")
-
             send_file_to_api(current_file, api_url)
             send_file_to_api(current_process_file, api_url)
             break
 
         except Exception as e:
             print(f"Erro durante o monitoramento: {str(e)}")
-            time.sleep(2)
+            time.sleep(0.1)
